@@ -1,0 +1,43 @@
+stages:
+  - build
+  - deploy
+
+variables:
+  REGISTRY: "https://index.docker.io/v1/"
+
+.build: &build_def
+  stage: build
+  image:
+    name: gcr.io/kaniko-project/executor:v1.11.0-debug
+    entrypoint: [""]
+  before_script:
+    - echo "Authenticating with Docker registry..."
+    - echo "{\"auths\":{\"${REGISTRY}\":{\"auth\":\"$(printf "%s:%s" "${DOCKER_USER}" "${DOCKER_PASS}" | base64 | tr -d '\n')\"}}}" > /kaniko/.docker/config.json
+  script:
+    - echo "Building container..."
+    - /kaniko/executor --context "${CI_PROJECT_DIR}/website" --dockerfile "${CI_PROJECT_DIR}/website/Dockerfile" --destination "${CONTAINER_NAME}:${CI_COMMIT_TAG}"
+  tags:
+    - diplom-site
+  only:
+    - tags
+
+website: 
+  <<: *build_def
+  variables:
+    CONTAINER_NAME: "vodyakovdenis/diplom-test-site"
+    PROJECT_DIR: "${CI_PROJECT_DIR}/website"
+
+deploy:
+  image: gcr.io/cloud-builders/kubectl:latest
+  stage: deploy
+  script:
+    - kubectl config set-cluster kubernetes --server="$KUBE_URL" --insecure-skip-tls-verify=true
+    - kubectl config set-credentials admin --token="$KUBE_TOKEN"
+    - kubectl config set-context default --cluster=kubernetes --user=admin
+    - kubectl config use-context default
+    - sed -i "s/__VERSION__/$CI_COMMIT_TAG/" diplom-app.yml
+    - kubectl apply -f diplom-app.yml
+  tags:
+    - diplom-site
+  only:
+    - tags
